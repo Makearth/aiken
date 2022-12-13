@@ -59,6 +59,7 @@ dependencies = [
  "ignore",
  "indoc",
  "miette",
+ "owo-colors",
  "pallas-addresses",
  "pallas-codec",
  "pallas-crypto",
@@ -75,6 +76,7 @@ version = "0.0.26"
 dependencies = [
  "chumsky",
  "indexmap",
+ "indoc",
  "itertools",
  "miette",
  "pretty_assertions",

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, ops::Deref, sync::Arc};
 
-use uplc::builtins::DefaultFunction;
+use uplc::{ast::Type as UplcType, builtins::DefaultFunction};
 
 use crate::{
     ast::{Constant, DefinitionLocation, ModuleKind, Span, TypedConstant},
@@ -45,12 +45,16 @@ pub enum Type {
 
     /// A type variable. See the contained `TypeVar` enum for more information.
     ///
-    Var { tipo: Arc<RefCell<TypeVar>> },
+    Var {
+        tipo: Arc<RefCell<TypeVar>>,
+    },
     // /// A tuple is an ordered collection of 0 or more values, each of which
     // /// can have a different type, so the `tuple` type is the sum of all the
     // /// contained types.
     // ///
-    // Tuple { elems: Vec<Arc<Type>> },
+    Tuple {
+        elems: Vec<Arc<Type>>,
+    },
 }
 
 impl Type {
@@ -123,6 +127,82 @@ impl Type {
         }
     }
 
+    pub fn is_list(&self) -> bool {
+        match self {
+            Self::App { module, name, .. } if "List" == name && module.is_empty() => true,
+            Self::Var { tipo } => tipo.borrow().is_list(),
+            _ => false,
+        }
+    }
+
+    pub fn is_map(&self) -> bool {
+        match self {
+            Self::App {
+                module, name, args, ..
+            } if "List" == name && module.is_empty() => {
+                if let Type::Tuple { elems } = &*args[0] {
+                    elems.len() == 2
+                } else if let Type::Var { tipo } = &*args[0] {
+                    matches!(tipo.borrow().get_uplc_type(), UplcType::Pair(_, _))
+                } else {
+                    false
+                }
+            }
+            Self::Var { tipo } => tipo.borrow().is_map(),
+            _ => false,
+        }
+    }
+
+    pub fn is_tuple(&self) -> bool {
+        matches!(self, Self::Tuple { .. })
+    }
+
+    pub fn get_inner_type(&self) -> Vec<Arc<Type>> {
+        if self.is_list() {
+            match self {
+                Self::App { args, .. } => args.clone(),
+                Self::Var { tipo } => tipo.borrow().get_inner_type(),
+                _ => vec![],
+            }
+        } else if self.is_tuple() {
+            match self {
+                Self::Tuple { elems } => elems.to_vec(),
+                _ => vec![],
+            }
+        } else {
+            vec![]
+        }
+    }
+
+    pub fn get_uplc_type(&self) -> UplcType {
+        if self.is_int() {
+            UplcType::Integer
+        } else if self.is_bytearray() {
+            UplcType::ByteString
+        } else if self.is_string() {
+            UplcType::String
+        } else if self.is_bool() {
+            UplcType::Bool
+        } else if self.is_map() {
+            UplcType::List(UplcType::Pair(UplcType::Data.into(), UplcType::Data.into()).into())
+        } else if self.is_list() {
+            UplcType::List(UplcType::Data.into())
+        } else if self.is_tuple() {
+            match self {
+                Self::Tuple { elems } => {
+                    if elems.len() == 2 {
+                        UplcType::Pair(UplcType::Data.into(), UplcType::Data.into())
+                    } else {
+                        UplcType::List(UplcType::Data.into())
+                    }
+                }
+                _ => todo!(),
+            }
+        } else {
+            UplcType::Data
+        }
+    }
+
     /// Get the args for the type if the type is a specific `Type::App`.
     /// Returns None if the type is not a `Type::App` or is an incorrect `Type:App`
     ///
@@ -185,7 +265,7 @@ impl Type {
 
             Self::App { args, .. } => args.iter().find_map(|t| t.find_private_type()),
 
-            // Self::Tuple { elems, .. } => elems.iter().find_map(|t| t.find_private_type()),
+            Self::Tuple { elems, .. } => elems.iter().find_map(|t| t.find_private_type()),
             Self::Fn { ret, args, .. } => ret
                 .find_private_type()
                 .or_else(|| args.iter().find_map(|t| t.find_private_type())),
@@ -284,6 +364,34 @@ impl TypeVar {
         match self {
             Self::Link { tipo } => tipo.is_string(),
             _ => false,
+        }
+    }
+
+    pub fn is_list(&self) -> bool {
+        match self {
+            Self::Link { tipo } => tipo.is_list(),
+            _ => false,
+        }
+    }
+
+    pub fn is_map(&self) -> bool {
+        match self {
+            Self::Link { tipo } => tipo.is_map(),
+            _ => false,
+        }
+    }
+
+    pub fn get_inner_type(&self) -> Vec<Arc<Type>> {
+        match self {
+            Self::Link { tipo } => tipo.get_inner_type(),
+            _ => vec![],
+        }
+    }
+
+    pub fn get_uplc_type(&self) -> UplcType {
+        match self {
+            Self::Link { tipo } => tipo.get_uplc_type(),
+            _ => unreachable!(),
         }
     }
 }

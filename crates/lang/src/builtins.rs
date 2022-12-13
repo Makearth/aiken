@@ -336,7 +336,13 @@ pub fn from_default_function(
 
             Some((tipo, 1))
         }
-        DefaultFunction::IfThenElse => None,
+        DefaultFunction::IfThenElse => {
+            let ret = generic_var(id_gen.next());
+
+            let tipo = function(vec![bool(), ret.clone(), ret.clone()], ret);
+
+            Some((tipo, 3))
+        }
         DefaultFunction::ChooseUnit => None,
         DefaultFunction::Trace => {
             let ret = generic_var(id_gen.next());
@@ -436,6 +442,10 @@ pub fn byte_array() -> Arc<Type> {
         name: BYTE_ARRAY.to_string(),
         module: "".to_string(),
     })
+}
+
+pub fn tuple(elems: Vec<Arc<Type>>) -> Arc<Type> {
+    Arc::new(Type::Tuple { elems })
 }
 
 pub fn bool() -> Arc<Type> {

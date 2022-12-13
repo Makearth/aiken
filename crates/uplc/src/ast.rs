@@ -12,6 +12,8 @@ use crate::{
     },
 };
 
+pub mod builder;
+
 /// This represents a program in Untyped Plutus Core.
 /// A program contains a version tuple and a term.
 /// It is generic because Term requires a generic type.
@@ -106,6 +108,16 @@ pub enum Term<T> {
     Error,
     // tag: 7
     Builtin(DefaultFunction),
+}
+
+impl<T> Term<T> {
+    pub fn is_unit(&self) -> bool {
+        matches!(self, Term::Constant(Constant::Unit))
+    }
+
+    pub fn force_wrap(self) -> Self {
+        Term::Force(self.into())
+    }
 }
 
 impl<'a, T> Display for Term<T>
@@ -483,6 +495,7 @@ impl From<Term<FakeNamedDeBruijn>> for Term<NamedDeBruijn> {
 impl Program<NamedDeBruijn> {
     pub fn eval(
         &self,
+        initial_budget: ExBudget,
     ) -> (
         Result<Term<NamedDeBruijn>, crate::machine::Error>,
         ExBudget,
@@ -491,7 +504,7 @@ impl Program<NamedDeBruijn> {
         let mut machine = Machine::new(
             Language::PlutusV2,
             CostModel::default(),
-            ExBudget::default(),
+            initial_budget,
             200,
         );
 
@@ -546,6 +559,7 @@ impl Program<NamedDeBruijn> {
 impl Program<DeBruijn> {
     pub fn eval(
         &self,
+        initial_budget: ExBudget,
     ) -> (
         Result<Term<NamedDeBruijn>, crate::machine::Error>,
         ExBudget,
@@ -553,7 +567,7 @@ impl Program<DeBruijn> {
     ) {
         let program: Program<NamedDeBruijn> = self.clone().into();
 
-        program.eval()
+        program.eval(initial_budget)
     }
 }
 

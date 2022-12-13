@@ -8,7 +8,9 @@ pub mod config;
 pub mod error;
 pub mod format;
 pub mod module;
+pub mod options;
 pub mod script;
+pub mod telemetry;
 
 use aiken_lang::{
     ast::{Definition, Function, ModuleKind, TypedFunction},
@@ -18,6 +20,7 @@ use aiken_lang::{
     IdGenerator,
 };
 use miette::NamedSource;
+use options::{CodeGenMode, Options};
 use pallas::{
     codec::minicbor,
     ledger::{addresses::Address, primitives::babbage},
@@ -25,12 +28,17 @@ use pallas::{
 use pallas_traverse::ComputeHash;
 use script::Script;
 use serde_json::json;
-use uplc::ast::{DeBruijn, Program};
+use telemetry::{EventListener, TestInfo};
+use uplc::{
+    ast::{DeBruijn, Program},
+    machine::cost_model::ExBudget,
+};
 
 use crate::{
     config::Config,
     error::{Error, Warning},
     module::{CheckedModule, CheckedModules, ParsedModule, ParsedModules},
+    telemetry::Event,
 };
 
 #[derive(Debug)]
@@ -47,7 +55,10 @@ pub const MINT: &str = "mint";
 pub const WITHDRAWL: &str = "withdrawl";
 pub const VALIDATOR_NAMES: [&str; 4] = [SPEND, CERT, MINT, WITHDRAWL];
 
-pub struct Project {
+pub struct Project<T>
+where
+    T: EventListener,
+{
     config: Config,
     defined_modules: HashMap<String, PathBuf>,
     id_gen: IdGenerator,
@@ -55,10 +66,14 @@ pub struct Project {
     root: PathBuf,
     sources: Vec<Source>,
     pub warnings: Vec<Warning>,
+    event_listener: T,
 }
 
-impl Project {
-    pub fn new(config: Config, root: PathBuf) -> Project {
+impl<T> Project<T>
+where
+    T: EventListener,
+{
+    pub fn new(config: Config, root: PathBuf, event_listener: T) -> Project<T> {
         let id_gen = IdGenerator::new();
 
         let mut module_types = HashMap::new();
@@ -74,32 +89,68 @@ impl Project {
             root,
             sources: vec![],
             warnings: vec![],
+            event_listener,
         }
     }
 
     pub fn build(&mut self, uplc: bool) -> Result<(), Error> {
-        self.compile(true, uplc)
+        let options = Options {
+            code_gen_mode: CodeGenMode::Build(uplc),
+        };
+
+        self.compile(options)
     }
 
-    pub fn check(&mut self) -> Result<(), Error> {
-        self.compile(false, false)
+    pub fn check(&mut self, skip_tests: bool) -> Result<(), Error> {
+        let options = Options {
+            code_gen_mode: if skip_tests {
+                CodeGenMode::NoOp
+            } else {
+                CodeGenMode::Test
+            },
+        };
+
+        self.compile(options)
     }
 
-    pub fn compile(&mut self, uplc_gen: bool, uplc_dump: bool) -> Result<(), Error> {
+    pub fn compile(&mut self, options: Options) -> Result<(), Error> {
+        self.event_listener
+            .handle_event(Event::StartingCompilation {
+                root: self.root.clone(),
+                name: self.config.name.clone(),
+                version: self.config.version.clone(),
+            });
+
+        self.event_listener.handle_event(Event::ParsingProjectFiles);
+
         self.read_source_files()?;
 
         let parsed_modules = self.parse_sources()?;
 
         let processing_sequence = parsed_modules.sequence()?;
 
+        self.event_listener.handle_event(Event::TypeChecking);
+
         let mut checked_modules = self.type_check(parsed_modules, processing_sequence)?;
 
         let validators = self.validate_validators(&mut checked_modules)?;
 
-        if uplc_gen {
-            let programs = self.code_gen(validators, &checked_modules)?;
+        match options.code_gen_mode {
+            CodeGenMode::Build(uplc_dump) => {
+                self.event_listener.handle_event(Event::GeneratingUPLC {
+                    output_path: self.output_path(),
+                });
 
-            self.write_build_outputs(programs, uplc_dump)?;
+                let programs = self.code_gen(validators, &checked_modules)?;
+
+                self.write_build_outputs(programs, uplc_dump)?;
+            }
+            CodeGenMode::Test => {
+                let tests = self.test_gen(&checked_modules)?;
+
+                self.run_tests(tests);
+            }
+            CodeGenMode::NoOp => (),
         }
 
         Ok(())
@@ -336,6 +387,7 @@ impl Project {
                             func,
                         );
                     }
+                    Definition::Test(_) => {}
                     Definition::TypeAlias(ta) => {
                         type_aliases.insert((module.name.clone(), ta.alias.clone()), ta);
                     }
@@ -372,6 +424,7 @@ impl Project {
                 &data_types,
                 // &imports,
                 // &constants,
+                &self.module_types,
             );
 
             let program = generator.generate(body, arguments);
@@ -384,11 +437,135 @@ impl Project {
         Ok(programs)
     }
 
-    fn write_build_outputs(&self, programs: Vec<Script>, uplc_dump: bool) -> Result<(), Error> {
-        let assets = self.root.join("assets");
+    // TODO: revisit ownership and lifetimes of data in this function
+    fn test_gen(&mut self, checked_modules: &CheckedModules) -> Result<Vec<Script>, Error> {
+        let mut programs = Vec::new();
+        let mut functions = HashMap::new();
+        let mut type_aliases = HashMap::new();
+        let mut data_types = HashMap::new();
+        let mut imports = HashMap::new();
+        let mut constants = HashMap::new();
 
+        // let mut indices_to_remove = Vec::new();
+        let mut tests = Vec::new();
+
+        for module in checked_modules.values() {
+            for (_index, def) in module.ast.definitions().enumerate() {
+                match def {
+                    Definition::Fn(func) => {
+                        functions.insert(
+                            FunctionAccessKey {
+                                module_name: module.name.clone(),
+                                function_name: func.name.clone(),
+                            },
+                            func,
+                        );
+                    }
+                    Definition::Test(func) => {
+                        tests.push((module.name.clone(), func));
+                        // indices_to_remove.push(index);
+                    }
+                    Definition::TypeAlias(ta) => {
+                        type_aliases.insert((module.name.clone(), ta.alias.clone()), ta);
+                    }
+                    Definition::DataType(dt) => {
+                        data_types.insert(
+                            DataTypeKey {
+                                module_name: module.name.clone(),
+                                defined_type: dt.name.clone(),
+                            },
+                            dt,
+                        );
+                    }
+                    Definition::Use(import) => {
+                        imports.insert((module.name.clone(), import.module.join("/")), import);
+                    }
+                    Definition::ModuleConstant(mc) => {
+                        constants.insert((module.name.clone(), mc.name.clone()), mc);
+                    }
+                }
+            }
+
+            // for index in indices_to_remove.drain(0..) {
+            //     module.ast.definitions.remove(index);
+            // }
+        }
+
+        for (module_name, func_def) in tests {
+            let Function {
+                arguments,
+                name,
+                body,
+                ..
+            } = func_def;
+
+            let mut generator = CodeGenerator::new(
+                &functions,
+                // &type_aliases,
+                &data_types,
+                // &imports,
+                // &constants,
+                &self.module_types,
+            );
+
+            let program = generator.generate(body.clone(), arguments.clone());
+
+            let script = Script::new(module_name, name.to_string(), program.try_into().unwrap());
+
+            programs.push(script);
+        }
+
+        Ok(programs)
+    }
+
+    fn run_tests(&self, tests: Vec<Script>) {
+        // TODO: in the future we probably just want to be able to
+        // tell the machine to not explode on budget consumption.
+        let initial_budget = ExBudget {
+            mem: i64::MAX,
+            cpu: i64::MAX,
+        };
+
+        if !tests.is_empty() {
+            self.event_listener.handle_event(Event::RunningTests);
+        }
+
+        let mut results = Vec::new();
+
+        for test in tests {
+            match test.program.eval(initial_budget) {
+                (Ok(..), remaining_budget, _) => {
+                    let test_info = TestInfo {
+                        is_passing: true,
+                        test,
+                        spent_budget: initial_budget - remaining_budget,
+                    };
+
+                    results.push(test_info);
+                }
+                (Err(_), remaining_budget, _) => {
+                    let test_info = TestInfo {
+                        is_passing: false,
+                        test,
+                        spent_budget: initial_budget - remaining_budget,
+                    };
+
+                    results.push(test_info);
+                }
+            }
+        }
+
+        self.event_listener
+            .handle_event(Event::FinishedTests { tests: results });
+    }
+
+    fn output_path(&self) -> PathBuf {
+        self.root.join("assets")
+    }
+
+    fn write_build_outputs(&self, programs: Vec<Script>, uplc_dump: bool) -> Result<(), Error> {
         for script in programs {
-            let script_output_dir = assets.join(script.module).join(script.name);
+            let script_output_dir = self.output_path().join(script.module).join(script.name);
 
             fs::create_dir_all(&script_output_dir)?;
 

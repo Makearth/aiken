@@ -68,8 +68,9 @@ pub enum Token {
     Opaque,
     Pub,
     Use,
+    Test,
     Todo,
-    Try,
+    Trace,
     Type,
     When,
 }
@@ -143,8 +144,9 @@ impl fmt::Display for Token {
             Token::Opaque => "opaque",
             Token::Pub => "pub",
             Token::Todo => "todo",
-            Token::Try => "try",
+            Token::Trace => "try",
             Token::Type => "type",
+            Token::Test => "test",
         };
         write!(f, "\"{}\"", s)
     }

@@ -20,6 +20,14 @@ For now you'll need rust installed, see [rustup](https://rustup.rs).
 
 ### Getting started
 
+In case you have fresh installation of `rustup` you might need to do:
+
+```console
+
+rustup install stable
+
+```
+
 ```console
 $ cargo install aiken
 
@@ -28,7 +36,7 @@ $ aiken --help
 
 ### How to use
 
-For more information please see the [user manual](https://txpipe.github.io/aiken).
+For more information please see the [user manual](https://aiken-lang.github.io/aiken/).
 
 ## Roadmap
 

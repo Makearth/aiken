@@ -138,6 +138,8 @@ pub enum Definition<T, Expr, ConstantRecordTag, PackageName> {
     Use(Use<PackageName>),
 
     ModuleConstant(ModuleConstant<T, ConstantRecordTag>),
+
+    Test(Function<T, Expr>),
 }
 
 impl<A, B, C, E> Definition<A, B, C, E> {
@@ -147,7 +149,8 @@ impl<A, B, C, E> Definition<A, B, C, E> {
             | Definition::Use(Use { location, .. })
             | Definition::TypeAlias(TypeAlias { location, .. })
             | Definition::DataType(DataType { location, .. })
-            | Definition::ModuleConstant(ModuleConstant { location, .. }) => *location,
+            | Definition::ModuleConstant(ModuleConstant { location, .. })
+            | Definition::Test(Function { location, .. }) => *location,
         }
     }
 
@@ -157,7 +160,8 @@ impl<A, B, C, E> Definition<A, B, C, E> {
             Definition::Fn(Function { doc, .. })
             | Definition::TypeAlias(TypeAlias { doc, .. })
             | Definition::DataType(DataType { doc, .. })
-            | Definition::ModuleConstant(ModuleConstant { doc, .. }) => {
+            | Definition::ModuleConstant(ModuleConstant { doc, .. })
+            | Definition::Test(Function { doc, .. }) => {
                 let _ = std::mem::replace(doc, Some(new_doc));
             }
         }
@@ -183,6 +187,11 @@ pub enum Constant<T, RecordTag> {
     String {
         location: Span,
         value: String,
+    },
+
+    Tuple {
+        location: Span,
+        elements: Vec<Self>,
     },
 
     List {
@@ -221,6 +230,9 @@ impl TypedConstant {
             Constant::Int { .. } => builtins::int(),
             Constant::String { .. } => builtins::string(),
             Constant::ByteArray { .. } => builtins::byte_array(),
+            Constant::Tuple { elements, .. } => {
+                builtins::tuple(elements.iter().map(|e| e.tipo()).collect())
+            }
             Constant::List { tipo, .. }
             | Constant::Record { tipo, .. }
             | Constant::Var { tipo, .. } => tipo.clone(),
@@ -232,6 +244,7 @@ impl<A, B> Constant<A, B> {
     pub fn location(&self) -> Span {
         match self {
             Constant::Int { location, .. }
+            | Constant::Tuple { location, .. }
             | Constant::List { location, .. }
             | Constant::String { location, .. }
             | Constant::Record { location, .. }
@@ -385,12 +398,18 @@ pub enum Annotation {
         location: Span,
         name: String,
     },
+
+    Tuple {
+        location: Span,
+        elems: Vec<Self>,
+    },
 }
 
 impl Annotation {
     pub fn location(&self) -> Span {
         match self {
             Annotation::Fn { location, .. }
+            | Annotation::Tuple { location, .. }
             | Annotation::Var { location, .. }
             | Annotation::Hole { location, .. }
             | Annotation::Constructor { location, .. } => *location,
@@ -417,6 +436,19 @@ impl Annotation {
                         && arguments
                             .iter()
                             .zip(o_arguments)
+                            .all(|a| a.0.is_logically_equal(a.1))
+                }
+                _ => false,
+            },
+            Annotation::Tuple { elems, location: _ } => match other {
+                Annotation::Tuple {
+                    elems: o_elems,
+                    location: _,
+                } => {
+                    elems.len() == o_elems.len()
+                        && elems
+                            .iter()
+                            .zip(o_elems)
                             .all(|a| a.0.is_logically_equal(a.1))
                 }
                 _ => false,
@@ -584,10 +616,11 @@ pub enum Pattern<Constructor, Type> {
         with_spread: bool,
         tipo: Type,
     },
-    // Tuple {
-    //     location: Span,
-    //     elems: Vec<Self>,
-    // },
+
+    Tuple {
+        location: Span,
+        elems: Vec<Self>,
+    },
 }
 
 impl<A, B> Pattern<A, B> {
@@ -600,7 +633,7 @@ impl<A, B> Pattern<A, B> {
             | Pattern::List { location, .. }
             | Pattern::Discard { location, .. }
             | Pattern::String { location, .. }
-            // | Pattern::Tuple { location, .. }
+            | Pattern::Tuple { location, .. }
             // | Pattern::Concatenate { location, .. }
             | Pattern::Constructor { location, .. } => *location,
         }

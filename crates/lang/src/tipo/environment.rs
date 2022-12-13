@@ -12,7 +12,7 @@ use crate::{
         RecordConstructor, RecordConstructorArg, Span, TypeAlias, TypedDefinition,
         UnqualifiedImport, UntypedDefinition, Use, PIPE_VARIABLE,
     },
-    builtins::{self, function, generic_var, unbound_var},
+    builtins::{self, function, generic_var, tuple, unbound_var},
     tipo::fields::FieldMap,
     IdGenerator,
 };
@@ -255,6 +255,7 @@ impl<'a> Environment<'a> {
             definition @ (Definition::TypeAlias { .. }
             | Definition::DataType { .. }
             | Definition::Use { .. }
+            | Definition::Test { .. }
             | Definition::ModuleConstant { .. }) => definition,
         }
     }
@@ -564,12 +565,13 @@ impl<'a> Environment<'a> {
                     .collect(),
                 self.instantiate(ret.clone(), ids, hydrator),
             ),
-            // Type::Tuple { elems } => tuple(
-            //     elems
-            //         .iter()
-            //         .map(|t| self.instantiate(t.clone(), ids, hydrator))
-            //         .collect(),
-            // ),
+
+            Type::Tuple { elems } => tuple(
+                elems
+                    .iter()
+                    .map(|t| self.instantiate(t.clone(), ids, hydrator))
+                    .collect(),
+            ),
         }
     }
 
@@ -910,7 +912,10 @@ impl<'a> Environment<'a> {
                 }
             }
 
-            Definition::Fn { .. } | Definition::Use { .. } | Definition::ModuleConstant { .. } => {}
+            Definition::Fn { .. }
+            | Definition::Test { .. }
+            | Definition::Use { .. }
+            | Definition::ModuleConstant { .. } => {}
         }
 
         Ok(())
@@ -987,6 +992,24 @@ impl<'a> Environment<'a> {
                 if !public {
                     self.init_usage(name.clone(), EntityKind::PrivateFunction, *location);
                 }
+            }
+
+            Definition::Test(Function { name, location, .. }) => {
+                hydrators.insert(name.clone(), Hydrator::new());
+                let arg_types = vec![];
+                let return_type = builtins::bool();
+                self.insert_variable(
+                    name.clone(),
+                    ValueConstructorVariant::ModuleFn {
+                        name: name.clone(),
+                        field_map: None,
+                        module: module_name.to_owned(),
+                        arity: 0,
+                        location: *location,
+                        builtin: None,
+                    },
+                    function(arg_types, return_type),
+                );
             }
 
             Definition::DataType(DataType {
@@ -1199,6 +1222,19 @@ impl<'a> Environment<'a> {
                 Ok(())
             }
 
+            (Type::Tuple { elems: elems1, .. }, Type::Tuple { elems: elems2, .. })
+                if elems1.len() == elems2.len() =>
+            {
+                for (a, b) in elems1.iter().zip(elems2) {
+                    unify_enclosed_type(
+                        t1.clone(),
+                        t2.clone(),
+                        self.unify(a.clone(), b.clone(), location),
+                    )?;
+                }
+                Ok(())
+            }
+
             (
                 Type::Fn {
                     args: args1,
@@ -1400,6 +1436,7 @@ fn unify_unbound_type(tipo: Arc<Type>, own_id: u64, location: Span) -> Result<()
             for arg in args {
                 unify_unbound_type(arg.clone(), own_id, location)?
             }
+
             Ok(())
         }
 
@@ -1407,7 +1444,16 @@ fn unify_unbound_type(tipo: Arc<Type>, own_id: u64, location: Span) -> Result<()
             for arg in args {
                 unify_unbound_type(arg.clone(), own_id, location)?;
             }
+
             unify_unbound_type(ret.clone(), own_id, location)
+        }
+
+        Type::Tuple { elems, .. } => {
+            for elem in elems {
+                unify_unbound_type(elem.clone(), own_id, location)?
+            }
+
+            Ok(())
         }
 
         Type::Var { .. } => unreachable!(),
@@ -1591,11 +1637,12 @@ pub(crate) fn generalise(t: Arc<Type>, ctx_level: usize) -> Arc<Type> {
                 .collect(),
             generalise(ret.clone(), ctx_level),
         ),
-        // Type::Tuple { elems } => tuple(
-        //     elems
-        //         .iter()
-        //         .map(|t| generalise(t.clone(), ctx_level))
-        //         .collect(),
-        // ),
+
+        Type::Tuple { elems } => tuple(
+            elems
+                .iter()
+                .map(|t| generalise(t.clone(), ctx_level))
+                .collect(),
+        ),
     }
 }

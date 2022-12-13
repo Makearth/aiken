@@ -3,6 +3,7 @@ use std::sync::{
     Arc,
 };
 
+pub mod air;
 pub mod ast;
 pub mod builtins;
 pub mod expr;

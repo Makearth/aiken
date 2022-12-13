@@ -30,6 +30,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = ParseError> {
         just("||").to(Token::VbarVbar),
         just('|').to(Token::Vbar),
         just("&&").to(Token::AmperAmper),
+        just('#').to(Token::Hash),
         just("\n\n").to(Token::EmptyLine),
     ));
 
@@ -66,6 +67,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = ParseError> {
         "check" => Token::Assert,
         "const" => Token::Const,
         "fn" => Token::Fn,
+        "test" => Token::Test,
         "if" => Token::If,
         "else" => Token::Else,
         "is" => Token::Is,
@@ -74,7 +76,7 @@ pub fn lexer() -> impl Parser<char, Vec<(Token, Span)>, Error = ParseError> {
         "pub" => Token::Pub,
         "use" => Token::Use,
         "todo" => Token::Todo,
-        "try" => Token::Try,
+        "trace" => Token::Trace,
         "type" => Token::Type,
         "when" => Token::When,
         _ => {
