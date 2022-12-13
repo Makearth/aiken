@@ -15,7 +15,12 @@ where
         env::current_dir().into_diagnostic()?
     };
 
-    let config = Config::load(project_path.clone()).into_diagnostic()?;
+    let config = Config::load(project_path.clone());
+    if let Err(err) = config {
+        err.report();
+        miette::bail!("Failed to load project config");
+    };
+    let config = config.unwrap();
 
     let mut project = Project::new(config, project_path);
 
