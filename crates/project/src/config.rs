@@ -12,11 +12,14 @@ pub struct Config {
 
 impl Config {
     pub fn load(dir: PathBuf) -> io::Result<Config> {
-        if let Ok(raw_config) = fs::read_to_string(dir.join("aiken.toml")){
+        if let Ok(raw_config) = fs::read_to_string(dir.join("aiken.toml")) {
             let config = toml::from_str(&raw_config).unwrap();
             Ok(config)
-        }else{
-            Err(io::Error::new(io::ErrorKind::NotFound, "Not in build directory: aiken.toml"))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Not in build directory: aiken.toml",
+            ))
         }
     }
 }
