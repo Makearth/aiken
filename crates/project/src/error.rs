@@ -22,6 +22,9 @@ pub enum Error {
     #[error("File operation failed")]
     FileIo { error: io::Error, path: PathBuf },
 
+    #[error("Missing toml configuration file")]
+    MissingConfig { path: PathBuf },
+
     #[error("Source code incorrectly formatted")]
     Format { problem_files: Vec<Unformatted> },
 
@@ -140,6 +143,7 @@ impl Error {
         match self {
             Error::DuplicateModule { second, .. } => Some(second.to_path_buf()),
             Error::FileIo { .. } => None,
+            Error::MissingConfig { path } => Some(path.to_path_buf()),
             Error::Format { .. } => None,
             Error::StandardIo(_) => None,
             Error::ImportCycle { .. } => None,
@@ -155,6 +159,7 @@ impl Error {
         match self {
             Error::DuplicateModule { .. } => None,
             Error::FileIo { .. } => None,
+            Error::MissingConfig { .. } => None,
             Error::Format { .. } => None,
             Error::StandardIo(_) => None,
             Error::ImportCycle { .. } => None,
@@ -195,6 +200,7 @@ impl Diagnostic for Error {
         match self {
             Error::DuplicateModule { .. } => Some(Box::new("aiken::module::duplicate")),
             Error::FileIo { .. } => None,
+            Error::MissingConfig { .. } => None,
             Error::ImportCycle { .. } => Some(Box::new("aiken::module::cyclical")),
             Error::List(_) => None,
             Error::Parse { .. } => Some(Box::new("aiken::parser")),
@@ -214,6 +220,7 @@ impl Diagnostic for Error {
                 second.display()
             ))),
             Error::FileIo { .. } => None,
+            Error::MissingConfig { .. } => Some(Box::new("Try running `aiken new <NAME>` to initialise a project with the correct config.")),
             Error::ImportCycle { modules } => Some(Box::new(format!(
                 "Try moving the shared code to a separate module that the others can depend on\n- {}",
                 modules.join("\n- ")
@@ -232,6 +239,7 @@ impl Diagnostic for Error {
         match self {
             Error::DuplicateModule { .. } => None,
             Error::FileIo { .. } => None,
+            Error::MissingConfig { .. } => None,
             Error::ImportCycle { .. } => None,
             Error::List(_) => None,
             Error::Parse { error, .. } => error.labels(),
@@ -251,6 +259,7 @@ impl Diagnostic for Error {
         match self {
             Error::DuplicateModule { .. } => None,
             Error::FileIo { .. } => None,
+            Error::MissingConfig { .. } => None,
             Error::ImportCycle { .. } => None,
             Error::List(_) => None,
             Error::Parse { named, .. } => Some(named),

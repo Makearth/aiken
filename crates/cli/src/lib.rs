@@ -24,7 +24,8 @@ where
     let config = Config::load(project_path.clone());
     if let Err(err) = config {
         err.report();
-        miette::bail!("Failed to load project config");
+        // miette should fail, reporting err.
+        miette::bail!("Failed: {} error(s), 0 warning(s)", err.len());
     };
     let config = config.unwrap();
 
